@@ -101,6 +101,10 @@ def warmup_buckets(bs_bucket_config, seq_bucket_config):
                                 warmup_seq_bucket)
     return list(sorted(buckets, key=lambda b: (b[0] * b[1], b[1], b[0])))
 
+def warmup_buckets_promot(bs_bucket_config, seq_bucket_config):
+    buckets = itertools.product(warmup_range(bs_bucket_config),
+                                warmup_range(seq_bucket_config))
+    return list(sorted(buckets, key=lambda b: (b[0] * b[1], b[1], b[0])))
 
 def next_pow2(value: int):
     res = 1
@@ -508,7 +512,9 @@ class HabanaModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                f"bs:{self.prompt_bs_bucket_cfg}, "
                f"seq:{self.prompt_seq_bucket_cfg}")
         logger.info(msg)
-        self.prompt_buckets = warmup_buckets(self.prompt_bs_bucket_cfg,
+        # self.prompt_buckets = warmup_buckets(self.prompt_bs_bucket_cfg,
+        #                                      self.prompt_seq_bucket_cfg)
+        self.prompt_buckets = warmup_buckets_promot(self.prompt_bs_bucket_cfg,
                                              self.prompt_seq_bucket_cfg)
 
         msg = (f"Generated {len(self.prompt_buckets)} "
