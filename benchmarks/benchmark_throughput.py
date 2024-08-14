@@ -4,6 +4,8 @@ import json
 import random
 import time
 from typing import List, Optional, Tuple
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
 
 import torch
 from tqdm import tqdm
@@ -14,6 +16,12 @@ from vllm.engine.arg_utils import EngineArgs
 from vllm.model_executor.layers.quantization import QUANTIZATION_METHODS
 from vllm.utils import FlexibleArgumentParser
 
+old = torch._C._dispatch_tls_is_dispatch_key_excluded(
+    torch._C.DispatchKey.ADInplaceOrView
+)
+torch._C._dispatch_tls_set_dispatch_key_excluded(
+    torch._C.DispatchKey.ADInplaceOrView, True
+)
 
 def sample_requests(
     dataset_path: str,
@@ -85,7 +93,9 @@ def run_vllm(
     download_dir: Optional[str] = None,
     load_format: str = EngineArgs.load_format,
 ) -> float:
-    from vllm import LLM, SamplingParams
+    # from vllm import LLM, SamplingParams
+    from vllm.entrypoints.llm import LLM
+    from vllm.sampling_params import SamplingParams
     llm = LLM(
         model=model,
         tokenizer=tokenizer,
@@ -106,6 +116,12 @@ def run_vllm(
         max_num_batched_tokens=max_num_batched_tokens,
         distributed_executor_backend=distributed_executor_backend,
         load_format=load_format,
+
+        max_num_seqs=128,
+        block_size=128,
+        num_lookahead_slots=1,
+        use_v2_block_manager=True,
+        # enable_delayed_sampling=True,
     )
 
     # Add the requests to the engine.
@@ -128,6 +144,18 @@ def run_vllm(
     end = time.perf_counter()
     return end - start
 
+    # start = time.perf_counter()
+    # for warmup_idx in range(1):
+    #     print("="*50, "warm up", warmup_idx + 1, "="*50)
+    #     llm.generate(prompts, sampling_params, use_tqdm=True)
+    #     exit(0)
+    # end = time.perf_counter()
+
+    # print("="*50, "after warmup", "="*50)
+    # start = time.perf_counter()
+    # outputs = llm.generate(prompts, sampling_params, use_tqdm=True)
+    # end = time.perf_counter()
+    # return end - start
 
 def run_hf(
     requests: List[Tuple[str, int, int]],

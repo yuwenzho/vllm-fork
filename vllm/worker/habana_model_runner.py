@@ -9,6 +9,7 @@ import itertools
 import math
 import operator
 import os
+import sys
 import time
 from enum import IntEnum
 from typing import (TYPE_CHECKING, Any, Callable, Dict, List, NamedTuple,
@@ -73,7 +74,7 @@ def warmup_range(config: Tuple[int, int, int]):
     """Generate a warmup range.
 
     Start from bmin and multiply by 2 until you reach bstep.
-    Then, increase the values in the range by the value of bstep until you 
+    Then, increase the values in the range by the value of bstep until you
     reach bmax.
 
     Example:
@@ -95,8 +96,9 @@ def warmup_range(config: Tuple[int, int, int]):
 
 
 def warmup_buckets(bs_bucket_config, seq_bucket_config):
+    warmup_seq_bucket = [1024, 1152, 1280, 1408, 1536, 1664, 1792]
     buckets = itertools.product(warmup_range(bs_bucket_config),
-                                warmup_range(seq_bucket_config))
+                                warmup_seq_bucket)
     return list(sorted(buckets, key=lambda b: (b[0] * b[1], b[1], b[0])))
 
 
@@ -152,9 +154,11 @@ class HpuModelAdapter():
     def __init__(self, model, enforce_eager):
         self.model = model
         if not htorch.utils.internal.is_lazy() and not enforce_eager:
+            torch._dynamo.config.cache_size_limit = sys.maxsize
+            torch._dynamo.config.accumulated_cache_size_limit = sys.maxsize
             self.model = torch.compile(self.model,
-                                       backend='hpu_backend',
-                                       dynamic=False)
+                                        backend='hpu_backend',
+                                        dynamic=False)
 
     def _set_attn_bias(self, attn_metadata, batch_size, seq_len, device,
                        dtype):
@@ -190,6 +194,19 @@ class HpuModelAdapter():
                                                       input_ids.size(1),
                                                       input_ids.device,
                                                       torch.bfloat16)
+
+        print("=" * 10 )
+        print("input_ids shape =", kwargs['input_ids'].shape, kwargs['input_ids'].requires_grad, kwargs['input_ids'].retains_grad, ", positions shape =", kwargs['positions'].shape)
+        if kwargs['kv_caches'][0] is None:
+            print("kv_caches shape =", kwargs['kv_caches'][0])
+        else:
+            print("kv_caches shape =", kwargs['kv_caches'][0][0].shape)
+        print("atten_metada attn_bias shape =", kwargs['attn_metadata'].attn_bias.shape)
+        print("attn_metadata slot_mapping shape =", kwargs['attn_metadata'].slot_mapping.shape,)
+        print("attn_metadata seq_lens_tensor shape =", kwargs['attn_metadata'].seq_lens_tensor.shape,)
+        print("attn_metadata is_prompt", kwargs['attn_metadata'].is_prompt)
+        print("attn_metadata block_tables shape =", kwargs['attn_metadata'].block_tables.shape, )
+
         hidden_states = self.model(*args, **kwargs)
         hidden_states = hidden_states.view(-1, hidden_states.shape[-1])
         hidden_states = hidden_states.index_select(0, selected_token_indices)
