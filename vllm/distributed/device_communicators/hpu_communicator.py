@@ -22,7 +22,7 @@ class HpuCommunicator:
         # FIXME(kzawora): this is a workaround for a bug in Habana PT bridge
         # occurring when PT_HPU_ENABLE_LAZY_COLLECTIVES=true env var is used
         # (which is required for tensor parallel HPUGraph inference)
-        htorch.core.mark_step()
+        # htorch.core.mark_step()
         dist.all_reduce(x, group=self.group)
         return x
 
