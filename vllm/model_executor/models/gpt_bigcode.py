@@ -46,6 +46,7 @@ from .interfaces import SupportsLoRA
 
 is_hpu = current_platform.is_hpu()
 
+
 class GPTBigCodeAttention(nn.Module):
 
     def __init__(

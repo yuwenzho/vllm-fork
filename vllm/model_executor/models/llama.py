@@ -57,6 +57,7 @@ from .utils import PPMissingLayer, is_pp_missing_parameter, make_layers
 
 is_hpu = current_platform.is_hpu()
 
+
 class LlamaMLP(nn.Module):
 
     def __init__(
