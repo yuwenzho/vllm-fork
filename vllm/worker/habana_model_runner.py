@@ -39,6 +39,7 @@ from vllm.worker.model_runner_base import (
     _add_sampling_metadata_broadcastable_dict,
     _init_attn_metadata_from_tensor_dict,
     _init_sampling_metadata_from_tensor_dict)
+import sys
 
 from .profiler import Profiler
 
@@ -73,7 +74,7 @@ def warmup_range(config: Tuple[int, int, int]):
     """Generate a warmup range.
 
     Start from bmin and multiply by 2 until you reach bstep.
-    Then, increase the values in the range by the value of bstep until you 
+    Then, increase the values in the range by the value of bstep until you
     reach bmax.
 
     Example:
@@ -155,6 +156,8 @@ class HpuModelAdapter():
                                                '0').lower() in ['1', 'true']
 
         if not htorch.utils.internal.is_lazy() and not enforce_eager:
+            torch._dynamo.config.cache_size_limit = sys.maxsize
+            torch._dynamo.config.accumulated_cache_size_limit = sys.maxsize
             self.model = torch.compile(self.model,
                                        backend='hpu_backend',
                                        dynamic=False)
@@ -525,8 +528,11 @@ class HabanaModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                f"bs:{self.prompt_bs_bucket_cfg}, "
                f"seq:{self.prompt_seq_bucket_cfg}")
         logger.info(msg)
-        self.prompt_buckets = warmup_buckets(self.prompt_bs_bucket_cfg,
-                                             self.prompt_seq_bucket_cfg)
+        # self.prompt_buckets = warmup_buckets(self.prompt_bs_bucket_cfg,
+        #                                      self.prompt_seq_bucket_cfg)
+        # self.prompt_buckets = [(1, 256)] # num-prompts=1
+        # self.prompt_buckets = [[2, 256]] # num-prompts=2
+        self.prompt_buckets = [(16,640)] # num-prompts=10
 
         if self.lora_config:
             self.prompt_buckets[:] = [
@@ -542,8 +548,20 @@ class HabanaModelRunnerBase(ModelRunnerBase[TModelInputForHPU]):
                f"bs:{self.decode_bs_bucket_cfg}, "
                f"seq:{self.decode_seq_bucket_cfg}")
         logger.info(msg)
-        self.decode_buckets = warmup_buckets(self.decode_bs_bucket_cfg,
-                                             self.decode_seq_bucket_cfg)
+        # self.decode_buckets = warmup_buckets(self.decode_bs_bucket_cfg,
+        #                                      self.decode_seq_bucket_cfg)
+        # self.decode_buckets = [(1, 256)] # num-prompts=1
+        # self.decode_buckets = [(2, 256), (1, 128)] # num-prompts=2
+        self.decode_buckets = [(16, 640), (8, 640), (8, 768), (8, 896), (4, 896), (2, 896), (2, 1024), (2, 1152), (2, 1280), (1, 1280)] # num-prompts=10
+        # self.decode_buckets = [(1, 1280), (1, 1408), (1, 1536), (1, 1664),
+        #                        (2, 1152), (2, 1280),
+        #                        (4, 1024), (4, 1152),
+        #                        (8, 1024), (8, 1664), (8, 1792),
+        #                        (16, 1664),
+        #                        (32, 1536), (32, 1664),
+        #                        (64, 1536), (64, 1408),
+        #                        (128, 1024), (128, 1152), (128, 1280), (128, 1408), (128, 1536), (128, 1664), (128, 1792)
+        # ] # num-prompts=1000
         if self.lora_config:
             self.decode_buckets[:] = [
                 bucket for bucket in self.decode_buckets

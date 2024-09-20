@@ -18,6 +18,9 @@ from vllm.transformers_utils.tokenizer import get_cached_tokenizer
 from vllm.usage.usage_lib import UsageContext
 from vllm.utils import Counter, deprecate_kwargs
 
+from torch import profiler
+import time
+
 logger = init_logger(__name__)
 
 
@@ -84,7 +87,7 @@ class LLM:
         disable_custom_all_reduce: See ParallelConfig
         **kwargs: Arguments for :class:`~vllm.EngineArgs`. (See
             :ref:`engine_args`)
-    
+
     Note:
         This class is intended to be used for offline inference. For online
         serving, use the :class:`~vllm.AsyncLLMEngine` class instead.
@@ -265,6 +268,7 @@ class LLM:
         use_tqdm: bool = True,
         lora_request: Optional[Union[List[LoRARequest], LoRARequest]] = None,
         prompt_adapter_request: Optional[PromptAdapterRequest] = None,
+        profiling : bool = False,
     ) -> List[RequestOutput]:
         """Generates the completions for the input prompts.
 
@@ -275,13 +279,13 @@ class LLM:
         Args:
             inputs: A list of inputs to generate completions for.
             sampling_params: The sampling parameters for text generation. If
-                None, we use the default sampling parameters. 
-                When it is a single value, it is applied to every prompt. 
-                When it is a list, the list must have the same length as the 
+                None, we use the default sampling parameters.
+                When it is a single value, it is applied to every prompt.
+                When it is a list, the list must have the same length as the
                 prompts and it is paired one by one with the prompt.
             use_tqdm: Whether to use tqdm to display the progress bar.
             lora_request: LoRA request to use for generation, if any.
-            prompt_adapter_request: Prompt Adapter request to use for 
+            prompt_adapter_request: Prompt Adapter request to use for
                 generation, if any.
 
         Returns:
@@ -316,7 +320,7 @@ class LLM:
             lora_request=lora_request,
             prompt_adapter_request=prompt_adapter_request)
 
-        outputs = self._run_engine(use_tqdm=use_tqdm)
+        outputs = self._run_engine(use_tqdm=use_tqdm, profiling=profiling)
         return LLMEngine.validate_outputs(outputs, RequestOutput)
 
     @overload  # LEGACY: single (prompt + optional token ids)
@@ -423,7 +427,7 @@ class LLM:
                 use the default pooling parameters.
             use_tqdm: Whether to use tqdm to display the progress bar.
             lora_request: LoRA request to use for generation, if any.
-            prompt_adapter_request: Prompt Adapter request to use for 
+            prompt_adapter_request: Prompt Adapter request to use for
                 generation, if any.
 
         Returns:
@@ -552,7 +556,7 @@ class LLM:
             prompt_adapter_request=prompt_adapter_request)
 
     def _run_engine(
-            self, *, use_tqdm: bool
+            self, *, use_tqdm: bool, profiling : bool = False,
     ) -> List[Union[RequestOutput, EmbeddingRequestOutput]]:
         # Initialize tqdm.
         if use_tqdm:
@@ -568,8 +572,25 @@ class LLM:
         outputs: List[Union[RequestOutput, EmbeddingRequestOutput]] = []
         total_in_toks = 0
         total_out_toks = 0
+
+        if profiling == True:
+            print("=== Initializing profiler ====")
+            lprofiler = profiler.profile(
+                schedule=profiler.schedule(wait=0, warmup=10, active=1, repeat=1),
+                activities=[profiler.ProfilerActivity.CPU, profiler.ProfilerActivity.HPU],
+                on_trace_ready=profiler.tensorboard_trace_handler('vllm_logs', use_gzip=True),
+                with_stack=True, with_modules=False, record_shapes=False, profile_memory=False)
+            lprofiler.start()
+
+        iter_idx = 0
         while self.llm_engine.has_unfinished_requests():
+            start_time = time.time()
             step_outputs = self.llm_engine.step()
+            end_time = time.time()
+            iter_idx += 1
+            logger.info("{}: consuming time {:.4f} s".format(iter_idx, end_time - start_time))
+            if profiling == True:
+                lprofiler.step()
             for output in step_outputs:
                 if output.finished:
                     outputs.append(output)
@@ -586,6 +607,8 @@ class LLM:
                                 f"est. speed input: {in_spd:.2f} toks/s, "
                                 f"output: {out_spd:.2f} toks/s")
                         pbar.update(1)
+        if profiling == True:
+            lprofiler.stop()
         if use_tqdm:
             pbar.close()
         # Sort the outputs by request ID.
